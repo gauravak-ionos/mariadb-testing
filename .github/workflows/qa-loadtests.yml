@@ -1,0 +1,78 @@
+name: Load Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      simulation_users_number:
+        required: false
+        default: 100
+        description: "the number of users for load tests"
+        type: number
+      simulation_duration_seconds:
+        required: false
+        default: 120
+        description: "the duration of the gatling simulation in seconds"
+        type: number
+      environment:
+        required: false
+        default: qa
+        description: "the environment to run the tests against"
+        type: choice
+        options: ["qa"]
+      log_level:
+        required: false
+        default: "OFF"
+        description: "Gatling log level"
+        type: choice
+        options: ["OFF", "ERROR", "INFO", "DEBUG"]
+
+jobs:
+  run-load-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+    strategy:
+      #we don't want jobs to run in parallel
+      # because this may affect results
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        test-type: ["sample-load-test.feature"]
+        injection-type: ["ramp_users", "stress_peak_users"]
+    environment: dev
+    steps:
+      - name: get java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+    
+      - name: start load testing via gatling/karate
+        id: testrun
+        env:
+          tokenID: ${{ secrets.TOKENID }}
+          MAVEN_OPTS: -Xms3G -Xmx16G -XX:+AggressiveHeap
+        run: |
+          mvn -q test-compile gatling:test \
+          -Dkarate.env=${{ inputs.environment }} \
+          -Dgatling.conf.file=gatling.conf \
+          -Dusers=${{ inputs.simulation_users_number }} \
+          -Dduration=${{ inputs.simulation_duration_seconds }} \
+          -Dinjection_type=${{ matrix.injection-type }} \
+          -Dtest_feature=${{ matrix.test-type }} \
+          -Dgatling.core.outputDirectoryBaseName=${{ matrix.test-type }}_${{ matrix.injection-type }} \
+          -Droot_log_level=off \
+          -Dlog_level=${{ inputs.log_level }} \
+          -Dgatling.simulationClass=LoadTestSimulation
